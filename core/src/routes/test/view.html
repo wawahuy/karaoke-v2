@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test</title>
+
+  <style>
+    hr {
+      border: none;
+      border-top: 1px solid #ccc;
+      outline: none;
+      box-shadow: none;
+    }
+
+    .test-play-video video {
+      width: 640px;
+      height: 320px;
+      background: black;
+    }
+
+    .test-play-video input {
+      margin-bottom: 20px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="test-play-video">
+    <h2>Test Play Video</h2>
+    <input type="text" onchange="onChangeTestPlayVideo()" id="testPlayInput">
+    <br />
+    <video id="testPlayMedia" autoplay controls></video>
+  </div>
+  <hr />
+
+  <div class="test-play-video">
+    <h2>Test Play Video Cache</h2>
+    <input type="text" onchange="onChangeTestPlayCacheVideo()" id="testPlayCacheInput">
+    <br />
+    <video id="testPlayCacheMedia" autoplay controls></video>
+  </div>
+</body>
+
+<script>
+  // test play default
+  const idPlayInput = document.getElementById('testPlayInput');
+  const idPlayMedia = document.getElementById('testPlayMedia');
+  function onChangeTestPlayVideo() {
+    if (idPlayMedia.pause) {
+      idPlayMedia.pause();
+    }
+    const childrens = idPlayMedia.children;
+    for (let i = 0; i < childrens.length; i++) {
+      childrens[i].remove();
+    }
+    const source = document.createElement('source');
+    source.src = 'http://localhost:1112/test/v/' + idPlayInput.value;
+    idPlayMedia.appendChild(source);
+    idPlayMedia.load();
+    idPlayMedia.play();
+  }
+
+  // test play cache
+
+
+</script>
+
+</html>
