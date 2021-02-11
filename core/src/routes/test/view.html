@@ -64,7 +64,22 @@
   }
 
   // test play cache
-
+  const idPlayCacheInput = document.getElementById('testPlayCacheInput');
+  const idPlayCacheMedia = document.getElementById('testPlayCacheMedia');
+  function onChangeTestPlayCacheVideo() {
+    if (idPlayCacheMedia.pause) {
+      idPlayCacheMedia.pause();
+    }
+    const childrens = idPlayCacheMedia.children;
+    for (let i = 0; i < childrens.length; i++) {
+      childrens[i].remove();
+    }
+    const source = document.createElement('source');
+    source.src = 'http://localhost:1112/test/v-cache/' + idPlayCacheInput.value;
+    idPlayCacheMedia.appendChild(source);
+    idPlayCacheMedia.load();
+    idPlayCacheMedia.play();
+  }
 
 </script>
 
