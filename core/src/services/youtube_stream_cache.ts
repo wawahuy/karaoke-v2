@@ -1,9 +1,9 @@
 import { Option } from "core/models/youtube";
 import path from "path";
 import fs from "fs";
-import DBCache from "./db_cache";
+import CacheService from "./cache";
 
-export default class YoutubeStreamCacheService extends DBCache {
+export default class YoutubeStreamCacheService extends CacheService {
   constructor(private _option: Option) {
     super();
   }

@@ -1,6 +1,6 @@
 import ytdl from "ytdl-core";
 import { Readable } from "stream";
-import { Option } from "./models/youtube";
+import { Option, VideoInfo } from "./models/youtube";
 import log from "./log";
 
 export default class Youtube {
@@ -14,7 +14,7 @@ export default class Youtube {
     return ytdl(this.getURL(), option);
   }
 
-  async getInfo(): Promise<ytdl.videoInfo | null> {
+  async getInfo(): Promise<VideoInfo | null> {
     return ytdl.getInfo(this.getURL()).catch((err) => {
       log(err);
       return null;
