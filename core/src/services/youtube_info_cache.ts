@@ -4,7 +4,7 @@ import { VideoFormat, VideoInfo } from "../core/models/youtube";
 import VideoInfoModel from "../models/schema/video_info";
 import Moment from "moment";
 import fs from "fs";
-import log from "../core/log";
+import log, { logError } from "../core/log";
 
 export default class YoutubeInfoCacheService extends CacheService {
   private _pathTemporary: string | undefined;
@@ -15,7 +15,8 @@ export default class YoutubeInfoCacheService extends CacheService {
     const expiredSecond = Number(
       this._info?.player_response.streamingData.expiresInSeconds
     );
-    const expired = new Date().getTime() + Math.round(expiredSecond * 900);
+    const expired =
+      (this._createdDate?.getTime() || 0) + Math.round(expiredSecond * 900);
     return new Date().getTime() < expired;
   }
 
@@ -54,6 +55,7 @@ export default class YoutubeInfoCacheService extends CacheService {
     this._pathTemporary = videoInfoRows?.pathInfo;
     this._createdDate = videoInfoRows?.createdAt;
     if (!this._pathTemporary || !fs.statSync(this._pathTemporary)) {
+      await this.removeTemporary();
       return false;
     }
 
@@ -62,10 +64,17 @@ export default class YoutubeInfoCacheService extends CacheService {
     try {
       this._info = JSON.parse(file.toString("utf-8"));
     } catch (e) {
-      this.removeTemporary();
-      log(e);
+      logError(e);
+      await this.removeTemporary();
       return false;
     }
+
+    // log
+    if (!this.isExpired) {
+      log("Expired videoID: ", this._videoID);
+      await this.removeTemporary();
+    }
+
     return this.isExpired;
   }
 
@@ -95,9 +104,17 @@ export default class YoutubeInfoCacheService extends CacheService {
     fs.writeFileSync(path, JSON.stringify(this._info));
   }
 
-  private removeTemporary() {
+  private async removeTemporary() {
     if (this._pathTemporary && fs.statSync(this._pathTemporary)) {
       fs.unlinkSync(this._pathTemporary);
     }
+
+    await VideoInfoModel.destroy({
+      where: {
+        videoID: this._videoID,
+      },
+    });
+
+    log("delete temporary: ", this._videoID, this._pathTemporary);
   }
 }

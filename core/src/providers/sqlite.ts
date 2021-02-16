@@ -3,6 +3,7 @@ import sqlite from "sqlite3";
 import { Sequelize } from "sequelize-typescript";
 import dbConfigs from "../configs/db";
 import VideoInfoModel from "../models/schema/video_info";
+import VideoSegmentModel from "../models/schema/video_segment";
 
 export default class SqliteProvider {
   private static _instance = new SqliteProvider();
@@ -18,7 +19,7 @@ export default class SqliteProvider {
   }
 
   private initingModels() {
-    const models = [VideoInfoModel] as any[];
+    const models = [VideoInfoModel, VideoSegmentModel] as any[];
 
     // Add models
     this._db.addModels(models);

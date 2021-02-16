@@ -1,39 +1,58 @@
 import express, { Request, Response } from "express";
 import ytdl from "ytdl-core";
 import Youtube from "../../core/youtube";
+import log, { logError } from "../../core/log";
 import YoutubeInfoCacheService from "../../services/youtube_info_cache";
-import { Option } from "core/models/youtube";
-import log from "../../core/log";
+import YoutubeStreamCacheService from "../../services/youtube_stream_cache";
+import { YoutubeStreamCacheOption } from "../../models/youtube_stream_cache";
 
 export default async function testPlayGet(req: Request, res: Response) {
-  const youtube = new Youtube(req.params.video);
-  const youtubeInfoSevice = await YoutubeInfoCacheService.create(
-    req.params.video
-  );
+  const videoId = req.params.video;
 
-  // check expired
+  // info video
+  const youtubeInfoSevice = await YoutubeInfoCacheService.create(videoId);
   if (!youtubeInfoSevice?.isExpired) {
-    res.status(404).send("Expired!");
+    res.status(404).send("video info expired or not exists!");
     return;
   }
 
-  // get video stats
-  const format = youtubeInfoSevice?.getBestFullFormat();
+  // get video format
+  const format = youtubeInfoSevice.getBestFullFormat();
   if (!format) {
-    res.status(404).send("Format not found!");
+    res.status(404).send("format not found!");
     return;
   }
-  const videoSize = Number(format.contentLength) || 0;
 
-  // Parse Range
+  // parse range
   const range = req.headers.range;
+  const videoSize = Number(format.contentLength) || 0;
   const patternRange = /bytes=(?<start>[\d]*)-(?<end>[\d]*)/g;
   const matchRange = patternRange.exec(range || "");
   const start = Number(matchRange?.groups?.start) || 0;
   const end = Number(matchRange?.groups?.end) || videoSize - 1;
-  log("Media position: ", start, end);
 
-  // Create headers & option
+  log("position: ", start, end, videoSize);
+  if (start >= end || start >= videoSize || end > videoSize) {
+    res.status(404).send("range failed!");
+    return;
+  }
+
+  // init stream data
+  const option: YoutubeStreamCacheOption = {
+    format,
+    start,
+    end,
+    videoId,
+  };
+  const youtubeStreamCacheService = await YoutubeStreamCacheService.create(
+    option
+  );
+  if (!youtubeStreamCacheService) {
+    res.status(404).send("stream cache failed!");
+    return;
+  }
+
+  // create headers
   const contentLength = end - start + 1;
   const headers = {
     "Content-Range": `bytes ${start}-${end}/${videoSize}`,
@@ -41,43 +60,13 @@ export default async function testPlayGet(req: Request, res: Response) {
     "Content-Length": contentLength,
     "Content-Type": "video/mp4",
   };
-  const options: Option = {
-    range: {
-      start,
-      end,
-    },
-    format,
-  };
 
   // HTTP Status 206 for Partial Content
   res.writeHead(206, headers);
 
-  // Stream the video chunk to the client
-  const ytr = youtube.read(options);
-
-  ytr
-    .on("end", () => {
-      log("yt end");
-    })
-    .on("error", (error) => {
-      log("yt stream error:", error);
-    })
-    .on("destroy", () => {
-      log("yt destroy");
-    })
-    .on("close", () => {
-      log("yt close");
-    })
-    .pipe(res);
-
-  res
-    .on("close", () => {
-      log("res pipe close");
-    })
-    .on("finish", () => {
-      log("res pipe finish");
-    })
-    .on("error", (error) => {
-      log("res pipe stream error:", error);
-    });
+  // stream
+  youtubeStreamCacheService.pipe(res);
+  youtubeStreamCacheService.on("error", (e) => {
+    logError(e);
+  });
 }
