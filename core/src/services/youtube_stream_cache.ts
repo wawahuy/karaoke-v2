@@ -1,6 +1,8 @@
-import { Duplex, Readable } from "stream";
+import { Duplex, Readable, Writable } from "stream";
 import path from "path";
-import fs from "fs";
+import fs, { write } from "fs";
+import * as _ from "lodash";
+import { v4 as uuid } from "uuid";
 import CacheService from "./cache";
 import { Option, VideoFormat, VideoInfo } from "../core/models/youtube";
 import {
@@ -14,17 +16,36 @@ import Locker from "../core/lock";
 import VideoSegmentModel, {
   VideoSegmentAttribute,
 } from "../models/schema/video_segment";
-import * as _ from "lodash";
+import CacheCluster from "../core/cache_cluster";
 
 export default class YoutubeStreamCacheService extends Readable {
   private static locker: Locker = new Locker();
   private _cacheSerivice: CacheService;
+  private _cacheCluster: CacheCluster;
   private _segments: SegmentReadable[];
+  private _segmentPosition = -1;
+  private _segmentCurrent: SegmentReadable | null;
+
+  private get maxRamSize() {
+    return this._option.cachedSize?.ram || appConfigs.ramCacheMax;
+  }
+
+  private get maxDiskClusterSize() {
+    return (
+      this._option.cachedSize?.diskCluster || appConfigs.diskCacheClusterMax
+    );
+  }
 
   private constructor(private _option: YoutubeStreamCacheOption) {
     super();
-    this._cacheSerivice = new CacheService();
     this._segments = [];
+    this._segmentCurrent = null;
+    this._cacheSerivice = new CacheService();
+    this._cacheCluster = new CacheCluster({
+      ramSize: this.maxRamSize,
+      diskClusterSize: this.maxDiskClusterSize,
+      path: this._cacheSerivice.getTemporaryDir(),
+    });
   }
 
   public static async create(option: YoutubeStreamCacheOption) {
@@ -55,22 +76,24 @@ export default class YoutubeStreamCacheService extends Readable {
         iTag: this._option.format?.itag,
       },
     });
-    const segmentsAttr = _.map(segmentsModel, "_attributes");
+    const segmentsAttr = _.map(segmentsModel, "dataValues");
 
     // build readable stream
-    const readables = this.buildReadableSegment(segmentsAttr);
+    const readables = await this.buildReadableSegment(segmentsAttr);
     if (!readables?.length) {
       return false;
     }
     this._segments = readables;
     log("Create streams: ", readables.length);
 
+    // stream
+    this.nextSegment();
     return true;
   }
 
-  private buildReadableSegment(
+  private async buildReadableSegment(
     segments: VideoSegmentAttribute[]
-  ): SegmentReadable[] | null {
+  ): Promise<SegmentReadable[] | null> {
     let results: SegmentReadable[] = [];
     if (!this._option.videoId) {
       return null;
@@ -83,11 +106,11 @@ export default class YoutubeStreamCacheService extends Readable {
     // ex: 20-30, 50-70
     // rs: 0-19, 20-30, 31-49, 50-70, ...
     const byteSize = Number(this._option.format?.contentLength) || 0;
-    const segmentsFull: VideoSegmentAttribute[] = [];
+    let segmentsFull: VideoSegmentAttribute[] = [];
     let bytePos = (segments?.[0]?.start || 0) - 1;
 
     // build 0 -> bytePos
-    if (_.isNumber(bytePos) && bytePos > 0) {
+    if (bytePos > 0) {
       segmentsFull.push({
         start: 0,
         end: bytePos - 1,
@@ -117,41 +140,81 @@ export default class YoutubeStreamCacheService extends Readable {
     }
 
     // cut segment with offset range of player
+    const offsetStart = this._option.start || 0;
+    const offsetEnd = this._option.end || 0;
+    segmentsFull = segmentsFull.filter((segment) => {
+      const start = segment.start || 0;
+      const end = segment.end || 0;
+      return (
+        _.inRange(offsetStart, start, end) || _.inRange(offsetEnd, start, end)
+      );
+    });
 
     // fill stream data
-    for (let segment of segmentsFull) {
-      let newData: boolean;
-      let readable: Readable | null;
+    for (const segment of segmentsFull) {
+      const segmentReadable: SegmentReadable = {
+        model: _.cloneDeep(segment),
+      };
+      const start = segment.start || 0;
+      const end = segment.end || 0;
+      let offset = 0;
 
-      if (!!segment.pathInfo) {
-        if (fs.statSync(segment.pathInfo)) {
-          newData = false;
-          readable = fs.createReadStream(segment.pathInfo);
-        } else {
-          newData = true;
-          readable = this.createYoutubeStream(
-            segment.start || 0,
-            segment.end || 0
-          );
-          // remvoe trigger file on DB
-        }
-      } else {
-        newData = true;
-        readable = this.createYoutubeStream(
-          segment.start || 0,
-          segment.end || 0
-        );
+      // make offset
+      if (offsetStart > start) {
+        offset = offsetStart - start;
+        log("Make stream has offset", offset);
       }
 
-      if (!readable) {
+      // get stream
+      let err: boolean = false;
+      if (
+        !segment.pathInfo ||
+        segment.anotherSaving ||
+        !(err = this.checkErrorFileSegment(segment))
+      ) {
+        // remove on DB
+        if (err) {
+          logError("File cached failed", segment.pathInfo);
+          await this.removeDBSegment(segment);
+        }
+
+        // create write file
+        // if dif another saving and no file cached
+        if (segmentReadable.model && !segment.anotherSaving) {
+          const filePath = this.generationPathFile(segment);
+          segmentReadable.model.pathInfo = filePath;
+          segmentReadable.newData = true;
+          segmentReadable.writeable = fs.createWriteStream(filePath);
+          // saving on db
+          await this.setSavingOnDBSegment(segment, true);
+        } else {
+          segmentReadable.newData = false;
+        }
+
+        segmentReadable.readable = this.createYoutubeStream(
+          start + offset,
+          end
+        );
+      } else {
+        segmentReadable.newData = false;
+        segmentReadable.readable = fs.createReadStream(segment.pathInfo, {
+          start: offset,
+        });
+      }
+
+      // check readable
+      if (!segmentReadable.readable) {
         return null;
       }
+      results.push(segmentReadable);
 
-      results.push({
-        newData,
-        readable,
-        model: segment,
-      });
+      log(
+        "Make stream id:",
+        this._option.videoId,
+        start,
+        end,
+        segmentReadable.newData
+      );
     }
 
     return results;
@@ -159,7 +222,7 @@ export default class YoutubeStreamCacheService extends Readable {
 
   private createYoutubeStream(start: number, end: number) {
     if (!this._option.videoId) {
-      return null;
+      return undefined;
     }
 
     const youtube = new Youtube(this._option.videoId);
@@ -175,23 +238,129 @@ export default class YoutubeStreamCacheService extends Readable {
     return youtube.read(options);
   }
 
+  private checkErrorFileSegment(info: VideoSegmentAttribute) {
+    const size = (info.end || 0) - (info.start || 0);
+    if (info.pathInfo && fs.existsSync(info.pathInfo)) {
+      const stats = fs.statSync(info.pathInfo);
+      if (stats.isFile && stats.size === size) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private generationPathFile(info: VideoSegmentAttribute) {
+    const dir = path.join(this.getFileDir(), info.videoID || "_");
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir);
+    }
+    return path.join(dir, uuid());
+  }
+
   private getFileDir() {
-    const p = path.join(this._cacheSerivice.getDataDir(), "/file");
+    const p = path.join(this._cacheSerivice.getDataDir(), "/segment");
     if (!fs.existsSync(p)) {
       fs.mkdirSync(p);
     }
     return p;
   }
 
-  private getMaxSizeCache() {
-    return 1024 * 1024 || appConfigs.ramCacheMax;
+  private async setSavingOnDBSegment(
+    segment: VideoSegmentAttribute,
+    saving: boolean = true
+  ) {
+    // create & find segment
+    const models = await VideoSegmentModel.findOrCreate({
+      where: {
+        videoID: this._option.videoId,
+        iTag: this._option.format?.itag,
+        start: segment.start,
+        end: segment.end,
+      },
+    });
+    if (!models.length) {
+      return false;
+    }
+
+    // set saving and path info
+    const model = models[0];
+    if (segment.pathInfo) {
+      model.pathInfo = segment.pathInfo;
+    }
+    model.anotherSaving = saving;
+    await model.save();
+    return true;
   }
 
+  private async removeDBSegment(segment: VideoSegmentAttribute) {
+    if (segment.pathInfo && fs.existsSync(segment.pathInfo)) {
+      fs.unlinkSync(segment.pathInfo);
+    }
+
+    await VideoSegmentModel.destroy({
+      where: {
+        videoID: this._option.videoId,
+        iTag: this._option.format?.itag,
+        start: segment.start,
+        end: segment.end,
+      },
+      force: true,
+    });
+  }
+
+  private close() {}
+
+  private nextSegment(): boolean {
+    this._segmentPosition++;
+    if (this._segmentPosition > this._segments.length) {
+      return false;
+    }
+
+    this._segmentCurrent = this._segments[this._segmentPosition];
+    if (!this._segmentCurrent?.readable) {
+      return false;
+    }
+
+    // generation writeable
+    const writeable = new Writable();
+    writeable._write = this._write.bind(this);
+
+    // readable
+    const readable = this._segmentCurrent.readable;
+    readable.pipe(writeable);
+    readable.once("end", this.readDataEnd.bind(this));
+    readable.once("error", this.readeDataError.bind(this));
+
+    log(
+      "Next stream",
+      this._option.videoId,
+      this._segmentCurrent.model?.start,
+      this._segmentCurrent.model?.end
+    );
+    return true;
+  }
+
+  /********************
+   *  Zone Readable   *
+   ********************/
   async _read(size: number) {}
 
+  /********************
+   *  Zone Writeable  *
+   ********************/
   private _write(
     chunk: any,
     encoding: BufferEncoding,
     next: (error?: Error | null) => void
-  ) {}
+  ) {
+    log(chunk);
+  }
+
+  private readDataEnd() {
+    log("end");
+  }
+
+  private readeDataError(err: Error) {
+    log(err);
+  }
 }

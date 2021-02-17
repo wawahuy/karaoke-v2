@@ -4,7 +4,7 @@ import { VideoFormat, VideoInfo } from "../core/models/youtube";
 import VideoInfoModel from "../models/schema/video_info";
 import Moment from "moment";
 import fs from "fs";
-import log, { logError } from "../core/log";
+import log, { logError, logTimeExecute } from "../core/log";
 
 export default class YoutubeInfoCacheService extends CacheService {
   private _pathTemporary: string | undefined;
@@ -27,8 +27,10 @@ export default class YoutubeInfoCacheService extends CacheService {
   public static async create(
     videoID: string
   ): Promise<YoutubeInfoCacheService | null> {
+    const logExec = logTimeExecute("Get info cached service");
     const vinfo = new YoutubeInfoCacheService(videoID);
     const isLoaded = (await vinfo.loadTemporary()) || (await vinfo.loadNew());
+    logExec();
     if (!isLoaded) {
       return null;
     }
@@ -113,6 +115,7 @@ export default class YoutubeInfoCacheService extends CacheService {
       where: {
         videoID: this._videoID,
       },
+      force: true,
     });
 
     log("delete temporary: ", this._videoID, this._pathTemporary);

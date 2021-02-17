@@ -24,6 +24,7 @@ export default {
   // port app
   port: process.env.PORT,
 
-  // max cache RAM on one stream data (default: 100MB)
-  ramCacheMax: 100 * 1024 * 1024,
+  // max cache RAM & disk on one stream data (default: 100MB)
+  ramCacheMax: 100 * 1024, // test
+  diskCacheClusterMax: 10,
 };

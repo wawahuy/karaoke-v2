@@ -5,6 +5,7 @@ export interface VideoSegmentAttribute {
   iTag?: number;
   start?: number;
   end?: number;
+  anotherSaving?: boolean;
   pathInfo?: string;
 }
 
@@ -37,6 +38,9 @@ export default class VideoSegmentModel extends Model<VideoSegmentAttribute> {
   @PrimaryKey
   @Column
   end!: number;
+
+  @Column
+  anotherSaving!: boolean;
 
   @Column
   pathInfo!: string;

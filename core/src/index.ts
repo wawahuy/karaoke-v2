@@ -1,9 +1,11 @@
 import express from "express";
 import fs from "fs";
+import cors from "cors";
 import log from "./core/log";
 import testRouter from "./routes/test";
 import appConfigs from "./configs/app";
 import dbConfigs from "./configs/db";
+import corsConfigs from "./configs/cors";
 import routerMain from "./routes/main";
 import SqliteProvider from "./providers/sqlite";
 
@@ -23,6 +25,7 @@ if (!fs.existsSync(appConfigs.dataDir)) {
 
 // Initing app
 const app = express();
+app.use(cors(corsConfigs));
 
 if (appConfigs.isDevelopment) {
   app.use("/test", testRouter);
