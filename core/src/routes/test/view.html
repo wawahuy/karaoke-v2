@@ -58,7 +58,7 @@
       childrens[i].remove();
     }
     const source = document.createElement('source');
-    source.src = 'http://localhost:1112/test/v/' + idPlayInput.value;
+    source.src = document.location.origin + '/test/v/' + idPlayInput.value;
     idPlayMedia.appendChild(source);
     idPlayMedia.load();
     idPlayMedia.play();
@@ -76,7 +76,7 @@
       childrens[i].remove();
     }
     const source = document.createElement('source');
-    source.src = 'http://localhost:1112/main/v/' + idPlayCacheInput.value;
+    source.src = document.location.origin + '/main/v/' + idPlayCacheInput.value;
     idPlayCacheMedia.appendChild(source);
     idPlayCacheMedia.load();
     idPlayCacheMedia.play();

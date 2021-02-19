@@ -269,26 +269,26 @@ export default class YoutubeStreamCacheService extends Readable {
     segment: VideoSegmentAttribute,
     saving: boolean = true
   ) {
-    // create & find segment
-    const models = await VideoSegmentModel.findOrCreate({
-      where: {
-        videoID: this._option.videoId,
-        iTag: this._option.format?.itag,
-        start: segment.start,
-        end: segment.end,
-      },
-    });
-    if (!models.length) {
-      return false;
-    }
+    // // create & find segment
+    // const models = await VideoSegmentModel.findOrCreate({
+    //   where: {
+    //     videoID: this._option.videoId,
+    //     iTag: this._option.format?.itag,
+    //     start: segment.start,
+    //     end: segment.end,
+    //   },
+    // });
+    // if (!models.length) {
+    //   return false;
+    // }
 
-    // set saving and path info
-    const model = models[0];
-    if (segment.pathInfo) {
-      model.pathInfo = segment.pathInfo;
-    }
-    model.anotherSaving = saving;
-    await model.save();
+    // // set saving and path info
+    // const model = models[0];
+    // if (segment.pathInfo) {
+    //   model.pathInfo = segment.pathInfo;
+    // }
+    // model.anotherSaving = saving;
+    // await model.save();
     return true;
   }
 
@@ -307,8 +307,6 @@ export default class YoutubeStreamCacheService extends Readable {
       force: true,
     });
   }
-
-  private close() {}
 
   private nextSegment(): boolean {
     this._segmentPosition++;
@@ -329,7 +327,7 @@ export default class YoutubeStreamCacheService extends Readable {
     const readable = this._segmentCurrent.readable;
     readable.pipe(writeable);
     readable.once("end", this.readDataEnd.bind(this));
-    readable.once("error", this.readeDataError.bind(this));
+    readable.once("error", this.readDataError.bind(this));
 
     log(
       "Next stream",
@@ -340,27 +338,25 @@ export default class YoutubeStreamCacheService extends Readable {
     return true;
   }
 
-  /********************
-   *  Zone Readable   *
-   ********************/
-  async _read(size: number) {}
+  async _read(size: number) {
+    this._cacheCluster.readOnceWatcher(size)((chunk) => {
+      this.push(chunk);
+    });
+  }
 
-  /********************
-   *  Zone Writeable  *
-   ********************/
   private _write(
     chunk: any,
     encoding: BufferEncoding,
     next: (error?: Error | null) => void
   ) {
-    log(chunk);
+    this._cacheCluster.push(chunk, next);
   }
 
   private readDataEnd() {
     log("end");
   }
 
-  private readeDataError(err: Error) {
-    log(err);
+  private readDataError(err: Error) {
+    logError(err);
   }
 }
